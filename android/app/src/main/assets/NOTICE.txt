@@ -1,0 +1,1 @@
+Chef Pocket includes Vosk API 0.3.75 and the vosk-model-small-en-us-0.15 English speech model by Alpha Cephei, licensed under Apache License 2.0 (https://alphacephei.com/vosk/models). JNA 5.18.1 is used under its Apache License 2.0 option. See LICENSE-APACHE-2.0.txt. Speech recognition is performed on device.

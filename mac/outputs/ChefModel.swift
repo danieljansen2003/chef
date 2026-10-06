@@ -226,10 +226,19 @@ final class ChefModel: ObservableObject {
         do {
             let sync = try PocketSync(root: personalWorkspace.root.appendingPathComponent("pocket-sync", isDirectory: true))
             sync.onImportedItem = { [weak self] item in
-                guard item.kind == .todo, let self else { return }
-                _ = try self.personalWorkspace.importPocketTodo(item)
-                self.personalJobs = try self.personalWorkspace.jobs()
-                self.workspaceStatus = "A phone to-do was saved in Chef's local task list."
+                guard let self else { return }
+                switch item.kind {
+                case .todo:
+                    _ = try self.personalWorkspace.importPocketTodo(item)
+                    self.personalJobs = try self.personalWorkspace.jobs()
+                    self.workspaceStatus = "A phone to-do was saved in Chef's local task list."
+                case .thought:
+                    break
+                case .calendar:
+                    self.workspaceStatus = item.done
+                        ? "A calendar event was added on the phone. Its synced details are saved in Pocket sync."
+                        : "A phone calendar request is saved in Pocket sync and pending on the phone. It has not been added to Calendar."
+                }
             }
             pocketSync = sync
             pocketSyncUnavailable = ""

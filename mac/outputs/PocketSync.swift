@@ -5,13 +5,20 @@ import Security
 import Darwin
 
 struct PocketItem: Identifiable, Codable, Equatable {
-    enum Kind: String, Codable { case todo, thought }
+    enum Kind: String, Codable { case todo, thought, calendar }
+    struct CalendarRequest: Codable, Equatable {
+        var startAt: String
+        var endAt: String
+        var allDay: Bool
+        var timeZone: String
+    }
     var id: String
     var kind: Kind
     var text: String
     var done: Bool
     var createdAt: String
     var updatedAt: String
+    var calendarRequest: CalendarRequest? = nil
 
     var uuid: UUID? { UUID(uuidString: id) }
 }
@@ -178,13 +185,23 @@ final class PocketSync: ObservableObject {
         guard Self.valid(item) else { throw PocketError.invalidItem }
         guard !state.items.contains(where: { $0.id == item.id && (Self.date($0.updatedAt) ?? .distantPast) >= (Self.date(item.updatedAt) ?? .distantPast) }) else { return }
         var candidate = state
-        if let index = candidate.items.firstIndex(where: { $0.id == item.id }) { candidate.items[index] = item }
-        else { candidate.items.append(item) }
+        candidate.items = Self.merging(candidate.items, item)
         if let token {
             let payload = try Self.seal(Self.encode(item), token: token)
             candidate.pending.append(Pending(id: UUID().uuidString.lowercased(), itemID: item.id, payload: payload.base64EncodedString()))
         }
         try save(candidate)
+    }
+
+    fileprivate static func merging(_ items: [PocketItem], _ item: PocketItem) -> [PocketItem] {
+        if let index = items.firstIndex(where: { $0.id == item.id }) {
+            var result = items
+            if (date(item.updatedAt) ?? .distantPast) > (date(result[index].updatedAt) ?? .distantPast) {
+                result[index] = item
+            }
+            return result
+        }
+        return [item] + items
     }
 
     private func enqueue(_ item: PocketItem) throws {
@@ -208,7 +225,7 @@ final class PocketSync: ObservableObject {
      private func merge(_ item: PocketItem, notify: Bool) throws {
         guard Self.valid(item) else { throw PocketError.invalidResponse }
         if let current = state.items.first(where: { $0.id == item.id }), (Self.date(current.updatedAt) ?? .distantPast) >= (Self.date(item.updatedAt) ?? .distantPast) {
-            if notify { try onImportedItem?(item) }
+            if notify { try onImportedItem?(current) }
             return
         }
         var candidate = state
@@ -355,13 +372,23 @@ final class PocketSync: ObservableObject {
         if !allowMissingLeaf && !fm.fileExists(atPath: filePath) { throw PocketError.unsafePath }
     }
 
-    private static func valid(_ item: PocketItem) -> Bool {
+    fileprivate static func valid(_ item: PocketItem) -> Bool {
         guard UUID(uuidString: item.id) != nil, item.text.count <= maxText,
               !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               item.createdAt.count <= 40, item.updatedAt.count <= 40,
               let c = date(item.createdAt),
               let u = date(item.updatedAt), u >= c else { return false }
-        return true
+        switch item.kind {
+        case .todo, .thought:
+            return item.calendarRequest == nil
+        case .calendar:
+            guard let request = item.calendarRequest,
+                  request.startAt.count <= 40, request.endAt.count <= 40,
+                  let start = date(request.startAt), let end = date(request.endAt),
+                  end > start, end.timeIntervalSince(start) <= 366 * 24 * 60 * 60,
+                  TimeZone(identifier: request.timeZone) != nil else { return false }
+            return true
+        }
     }
 
     private static func date(_ text: String) -> Date? {
@@ -517,12 +544,72 @@ struct PocketSyncPanel: View {
                         Button("Use a new channel on this Mac", role: .destructive) { sync.revokeAndRotate() }
                     } message: {
                         Text("This Mac will switch to a new channel. A phone holding the old link can still access that old channel and its history.")
+                }
+            }
+            let calendarRequests = sync.items.filter { $0.kind == .calendar }
+            if !calendarRequests.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Calendar captures").font(.subheadline.weight(.semibold))
+                    ForEach(calendarRequests) { request in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "calendar.badge.clock").foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(request.text).font(.caption)
+                                if let details = request.calendarRequest {
+                                    Text(Self.calendarRequestSummary(details))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Text(request.done ? "Added on phone" : "Calendar request · pending")
+                                    .font(.caption2).foregroundStyle(request.done ? .green : .orange)
+                            }
+                        }
                     }
+                }
             }
         }
         .padding()
         .frame(maxWidth: 520, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private static func calendarRequestSummary(_ request: PocketItem.CalendarRequest) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let start: Date?
+        if let fractionalStart = formatter.date(from: request.startAt) {
+            start = fractionalStart
+        } else {
+            formatter.formatOptions = [.withInternetDateTime]
+            start = formatter.date(from: request.startAt)
+        }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let end: Date?
+        if let fractionalEnd = formatter.date(from: request.endAt) {
+            end = fractionalEnd
+        } else {
+            formatter.formatOptions = [.withInternetDateTime]
+            end = formatter.date(from: request.endAt)
+        }
+        guard let start, let end else {
+            return "Date details unavailable"
+        }
+        let zone = TimeZone(identifier: request.timeZone) ?? .current
+        let dayFormatter = DateFormatter()
+        dayFormatter.timeZone = zone
+        dayFormatter.dateStyle = .medium
+        dayFormatter.timeStyle = .none
+        if request.allDay {
+            return "All day · \(dayFormatter.string(from: start)) · \(request.timeZone)"
+        }
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeZone = zone
+        timeFormatter.dateStyle = .medium
+        timeFormatter.timeStyle = .short
+        let endFormatter = DateFormatter()
+        endFormatter.timeZone = zone
+        endFormatter.dateStyle = .none
+        endFormatter.timeStyle = .short
+        return "\(timeFormatter.string(from: start))–\(endFormatter.string(from: end)) · \(request.timeZone)"
     }
 }
 
@@ -533,6 +620,37 @@ enum PocketSyncTests {
               PocketSync.pairingURL(for: "not-a-secret") == nil else { throw PocketSync.PocketError.invalidState }
         let item = PocketItem(id: UUID().uuidString.lowercased(), kind: .todo, text: "offline fixture", done: false,
                               createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z")
+        let legacyJSON = Data(#"{"id":"E931B8D2-8A31-48A0-BD60-0131521383F5","kind":"todo","text":"legacy capture","done":false,"createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"}"#.utf8)
+        let legacyItem = try JSONDecoder().decode(PocketItem.self, from: legacyJSON)
+        guard legacyItem.calendarRequest == nil else { throw PocketSync.PocketError.invalidItem }
+        let calendarItem = PocketItem(id: UUID().uuidString.lowercased(), kind: .calendar, text: "Dentist", done: false,
+                                      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+                                      calendarRequest: .init(startAt: "2026-01-02T00:00:00.000Z", endAt: "2026-01-03T00:00:00.000Z", allDay: true, timeZone: "America/Chicago"))
+        guard PocketSync.valid(calendarItem),
+              !PocketSync.valid(PocketItem(id: calendarItem.id, kind: .calendar, text: calendarItem.text, done: false,
+                                           createdAt: calendarItem.createdAt, updatedAt: calendarItem.updatedAt)),
+              !PocketSync.valid(PocketItem(id: calendarItem.id, kind: .calendar, text: calendarItem.text, done: false,
+                                           createdAt: calendarItem.createdAt, updatedAt: calendarItem.updatedAt,
+                                           calendarRequest: .init(startAt: "2026-01-03T00:00:00.000Z", endAt: "2026-01-02T00:00:00.000Z", allDay: true, timeZone: "America/Chicago"))),
+              !PocketSync.valid(PocketItem(id: calendarItem.id, kind: .calendar, text: calendarItem.text, done: false,
+                                           createdAt: calendarItem.createdAt, updatedAt: calendarItem.updatedAt,
+                                           calendarRequest: .init(startAt: "2026-01-02T00:00:00.000Z", endAt: "2027-01-04T00:00:00.000Z", allDay: true, timeZone: "America/Chicago"))),
+              !PocketSync.valid(PocketItem(id: calendarItem.id, kind: .calendar, text: calendarItem.text, done: false,
+                                           createdAt: calendarItem.createdAt, updatedAt: calendarItem.updatedAt,
+                                           calendarRequest: .init(startAt: "2026-01-02T00:00:00.000Z", endAt: "2026-01-03T00:00:00.000Z", allDay: true, timeZone: "Nowhere/NotATimeZone"))),
+              !PocketSync.valid(PocketItem(id: item.id, kind: .todo, text: item.text, done: false,
+                                           createdAt: item.createdAt, updatedAt: item.updatedAt, calendarRequest: calendarItem.calendarRequest)) else {
+            throw PocketSync.PocketError.invalidItem
+        }
+        let roundTrip = try JSONDecoder().decode(PocketItem.self, from: JSONEncoder().encode(calendarItem))
+        guard roundTrip == calendarItem else { throw PocketSync.PocketError.invalidItem }
+        let duplicateMerge = PocketSync.merging([calendarItem], calendarItem)
+        guard duplicateMerge.count == 1, duplicateMerge[0] == calendarItem else { throw PocketSync.PocketError.invalidItem }
+        var completedCalendarItem = calendarItem
+        completedCalendarItem.done = true
+        completedCalendarItem.updatedAt = "2026-01-01T00:00:01.000Z"
+        let updatedMerge = PocketSync.merging([calendarItem], completedCalendarItem)
+        guard updatedMerge.count == 1, updatedMerge[0].done else { throw PocketSync.PocketError.invalidItem }
         // Produced by WebCrypto AES-GCM with IV 000102030405060708090a0b, the key
         // derived from this fixture token, and the cleartext below. Combined form is IV || ciphertext || tag.
         let webCryptoCombined = Data(base64Encoded: "AAECAwQFBgcICQoLWkSf/dtOBGJ29NoZsT7Jk8dXnxls/d1czgw8fYhX3VFbHr/yNBFk4g==")!

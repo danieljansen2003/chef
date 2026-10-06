@@ -1,4 +1,5 @@
-export type PocketItem={id:string;kind:'todo'|'thought';text:string;done:boolean;createdAt:string;updatedAt:string};
+export type CalendarRequest={startAt:string;endAt:string;allDay:boolean;timeZone:string};
+export type PocketItem={id:string;kind:'todo'|'thought'|'calendar';text:string;done:boolean;createdAt:string;updatedAt:string;calendarRequest?:CalendarRequest};
 export type Envelope={v:1;op:'upsert';item:PocketItem};
 export type Pending={id:string;payload:string};
 const encoder=new TextEncoder();
@@ -14,7 +15,11 @@ export function parseCapture(raw:string,kind:'todo'|'thought'):{kind:'todo'|'tho
  return{kind,text};
 }
 export function validateItem(item:any):item is PocketItem{
- return item&&/^[a-f0-9-]{36}$/i.test(item.id)&&['todo','thought'].includes(item.kind)&&typeof item.done==='boolean'&&typeof item.text==='string'&&item.text.trim().length>0&&item.text.length<=500&&typeof item.createdAt==='string'&&Number.isFinite(Date.parse(item.createdAt))&&typeof item.updatedAt==='string'&&Number.isFinite(Date.parse(item.updatedAt));
+ if(!item||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(item.id)||!['todo','thought','calendar'].includes(item.kind)||typeof item.done!=='boolean'||typeof item.text!=='string'||!item.text.trim()||item.text.length>500||typeof item.createdAt!=='string'||!Number.isFinite(Date.parse(item.createdAt))||typeof item.updatedAt!=='string'||!Number.isFinite(Date.parse(item.updatedAt)))return false;
+ if(item.kind!=='calendar')return item.calendarRequest===undefined;
+ const request=item.calendarRequest;if(!request||typeof request.startAt!=='string'||typeof request.endAt!=='string'||typeof request.allDay!=='boolean'||typeof request.timeZone!=='string')return false;
+ const start=Date.parse(request.startAt),end=Date.parse(request.endAt);if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>366*86400000)return false;
+ try{new Intl.DateTimeFormat('en',{timeZone:request.timeZone});}catch{return false;}return !!request.timeZone;
 }
 export async function seal(token:string,envelope:Envelope){
  const key=await crypto.subtle.importKey('raw',await digest('chef-pocket-v1:'+token),'AES-GCM',false,['encrypt']);
