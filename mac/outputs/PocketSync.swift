@@ -19,8 +19,36 @@ struct PocketItem: Identifiable, Codable, Equatable {
     var createdAt: String
     var updatedAt: String
     var calendarRequest: CalendarRequest? = nil
+    var deleted: Bool? = nil
 
     var uuid: UUID? { UUID(uuidString: id) }
+}
+
+struct PocketChatMessage: Codable, Equatable, Identifiable {
+    enum Role: String, Codable { case user, chef }
+    var id: String
+    var conversationID: String
+    var role: Role
+    var text: String
+    var createdAt: String
+    var replyToID: String? = nil
+}
+
+struct PocketVoiceChunk: Codable, Equatable, Identifiable {
+    var id: String
+    var messageID: String
+    var index: Int
+    var count: Int
+    var data: String
+}
+
+struct PocketBriefingRequest: Codable, Equatable, Identifiable {
+    enum RequestType: String, Codable { case now, schedule }
+    var id: String
+    var conversationID: String
+    var requestType: RequestType
+    var request: String
+    var createdAt: String
 }
 
 @MainActor
@@ -36,6 +64,8 @@ final class PocketSync: ObservableObject {
     @Published private(set) var enabled = false
     @Published private(set) var pairingURL: URL?
     var onImportedItem: ((PocketItem) throws -> Void)?
+    var onChatMessage: ((PocketChatMessage) -> Void)?
+    var onBriefingRequest: ((PocketBriefingRequest) -> Void)?
 
     private struct Pending: Codable {
         var id: String
@@ -47,11 +77,36 @@ final class PocketSync: ObservableObject {
         var items: [PocketItem] = []
         var pending: [Pending] = []
         var resumeEnabled: Bool = false
+        var chatMessages: [PocketChatMessage] = []
+        var pendingChatIDs: [String] = []
+        var processedChatIDs: [String] = []
+        var phoneBriefings: [PocketBriefingRequest] = []
+        var pendingBriefingIDs: [String] = []
+        var processedBriefingIDs: [String] = []
+
+        private enum CodingKeys: String, CodingKey { case cursor, items, pending, resumeEnabled, chatMessages, pendingChatIDs, processedChatIDs, phoneBriefings, pendingBriefingIDs, processedBriefingIDs }
+        init() {}
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            cursor = try c.decodeIfPresent(Int.self, forKey: .cursor) ?? 0
+            items = try c.decodeIfPresent([PocketItem].self, forKey: .items) ?? []
+            pending = try c.decodeIfPresent([Pending].self, forKey: .pending) ?? []
+            resumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .resumeEnabled) ?? false
+            chatMessages = try c.decodeIfPresent([PocketChatMessage].self, forKey: .chatMessages) ?? []
+            pendingChatIDs = try c.decodeIfPresent([String].self, forKey: .pendingChatIDs) ?? []
+            processedChatIDs = try c.decodeIfPresent([String].self, forKey: .processedChatIDs) ?? []
+            phoneBriefings = try c.decodeIfPresent([PocketBriefingRequest].self, forKey: .phoneBriefings) ?? []
+            pendingBriefingIDs = try c.decodeIfPresent([String].self, forKey: .pendingBriefingIDs) ?? []
+            processedBriefingIDs = try c.decodeIfPresent([String].self, forKey: .processedBriefingIDs) ?? []
+        }
     }
     private struct Envelope: Codable {
         var v: Int = 1
         var op: String = "upsert"
-        var item: PocketItem
+        var item: PocketItem? = nil
+        var message: PocketChatMessage? = nil
+        var voice: PocketVoiceChunk? = nil
+        var briefing: PocketBriefingRequest? = nil
     }
     private struct Event: Codable {
         var seq: Int
@@ -71,6 +126,8 @@ final class PocketSync: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var showingPairing = false
     private var syncGeneration = 0
+    private var dispatchedChatIDs = Set<String>()
+    private var dispatchedBriefingIDs = Set<String>()
 
     init(root: URL) throws {
         self.root = root.standardizedFileURL
@@ -175,9 +232,20 @@ final class PocketSync: ObservableObject {
     func setCompleted(id: String, done: Bool) throws {
         guard let index = state.items.firstIndex(where: { $0.id == id }) else { throw PocketError.missingItem }
         var item = state.items[index]
-        guard item.kind == .todo else { throw PocketError.invalidItem }
+        guard item.kind == .todo, item.deleted != true else { throw PocketError.invalidItem }
         item.done = done
         item.updatedAt = Self.timestamp(Date())
+        try enqueue(item)
+    }
+
+    func deleteTodo(id: String) throws {
+        guard let index = state.items.firstIndex(where: { $0.id == id }) else { throw PocketError.missingItem }
+        var item = state.items[index]
+        guard item.kind == .todo else { throw PocketError.invalidItem }
+        guard item.deleted != true else { return }
+        item.deleted = true
+        let previous = Self.date(item.updatedAt) ?? .distantPast
+        item.updatedAt = Self.timestamp(max(Date(), previous.addingTimeInterval(0.001)))
         try enqueue(item)
     }
 
@@ -193,6 +261,92 @@ final class PocketSync: ObservableObject {
         try save(candidate)
     }
 
+    func pendingPhoneMessages() -> [PocketChatMessage] {
+        state.pendingChatIDs.compactMap { id in state.chatMessages.first(where: { $0.id == id }) }
+    }
+
+    func chatHistory(conversationID: String, limit: Int = 8) -> [PocketChatMessage] {
+        Array(state.chatMessages.filter { $0.conversationID == conversationID }.suffix(max(0, limit)))
+    }
+
+    func dispatchPendingChat() {
+        for message in pendingPhoneMessages() where !dispatchedChatIDs.contains(message.id) {
+            dispatchedChatIDs.insert(message.id)
+            onChatMessage?(message)
+        }
+    }
+
+    func dispatchPendingBriefings() {
+        for request in state.pendingBriefingIDs.compactMap({ id in state.phoneBriefings.first(where: { $0.id == id }) })
+            where !dispatchedBriefingIDs.contains(request.id) {
+            dispatchedBriefingIDs.insert(request.id)
+            onBriefingRequest?(request)
+        }
+    }
+
+    func retryPhoneChat(_ id: String) { dispatchedChatIDs.remove(id) }
+
+    func retryPhoneBriefing(_ id: String) { dispatchedBriefingIDs.remove(id) }
+
+    func completePhoneBriefing(_ id: String, text: String, audio: Data? = nil) throws {
+        guard let request = state.phoneBriefings.first(where: { $0.id == id }),
+              state.pendingBriefingIDs.contains(id) else { throw PocketError.invalidResponse }
+        var candidate = state
+        try queuePhoneReply(conversationID: request.conversationID, replyToID: id, text: text, audio: audio, to: &candidate)
+        candidate.pendingBriefingIDs.removeAll { $0 == id }
+        candidate.processedBriefingIDs.append(id)
+        candidate.processedBriefingIDs = Array(candidate.processedBriefingIDs.suffix(10_000))
+        try save(candidate)
+        dispatchedBriefingIDs.remove(id)
+        if enabled { startPolling() }
+    }
+
+    func enqueuePhoneReply(conversationID: String, replyToID: String, text: String, audio: Data? = nil) throws {
+        var candidate = state
+        try queuePhoneReply(conversationID: conversationID, replyToID: replyToID, text: text, audio: audio, to: &candidate)
+        try save(candidate)
+        if enabled { startPolling() }
+    }
+
+    private func queuePhoneReply(conversationID: String, replyToID: String, text: String, audio: Data?, to candidate: inout State) throws {
+        guard UUID(uuidString: conversationID) != nil, UUID(uuidString: replyToID) != nil,
+              !text.isEmpty, text.count <= 400 else { throw PocketError.invalidResponse }
+        let reply = PocketChatMessage(id: UUID().uuidString.lowercased(), conversationID: conversationID, role: .chef,
+                                      text: text, createdAt: Self.timestamp(Date()), replyToID: replyToID)
+        if let audio, !audio.isEmpty, audio.count <= 192_000 {
+            let count = (audio.count + 5_999) / 6_000
+            guard count <= 32 else { throw PocketError.invalidResponse }
+            for index in 0..<count {
+                let bytes = audio.subdata(in: (index * 6_000)..<min(audio.count, (index + 1) * 6_000))
+                let chunk = PocketVoiceChunk(id: UUID().uuidString.lowercased(), messageID: reply.id, index: index, count: count, data: bytes.base64EncodedString())
+                try appendOutbox(Envelope(v: 1, op: "voice", voice: chunk), id: chunk.id, to: &candidate)
+            }
+        }
+        try appendOutbox(Envelope(v: 1, op: "chat", message: reply), id: reply.id, to: &candidate)
+        candidate.chatMessages.append(reply)
+        candidate.chatMessages = Array(candidate.chatMessages.suffix(400))
+    }
+
+    func completePhoneChat(userMessageID: String, text: String, audio: Data? = nil) throws {
+        guard let incoming = state.chatMessages.first(where: { $0.id == userMessageID && $0.role == .user }),
+              state.pendingChatIDs.contains(userMessageID), !text.isEmpty, text.count <= 400 else { throw PocketError.invalidResponse }
+        try enqueuePhoneReply(conversationID: incoming.conversationID, replyToID: incoming.id, text: text, audio: audio)
+        var candidate = state
+        candidate.pendingChatIDs.removeAll { $0 == userMessageID }
+        candidate.processedChatIDs.append(userMessageID)
+        candidate.processedChatIDs = Array(candidate.processedChatIDs.suffix(10_000))
+        try save(candidate)
+        dispatchedChatIDs.remove(userMessageID)
+        if enabled { startPolling() }
+    }
+
+    private func appendOutbox(_ envelope: Envelope, id: String, to candidate: inout State) throws {
+        guard let token else { return }
+        let clear = try JSONEncoder().encode(envelope)
+        let sealed = try Self.seal(clear, token: token)
+        candidate.pending.append(Pending(id: UUID().uuidString.lowercased(), itemID: id, payload: sealed.base64EncodedString()))
+    }
+
     fileprivate static func merging(_ items: [PocketItem], _ item: PocketItem) -> [PocketItem] {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             var result = items
@@ -202,6 +356,11 @@ final class PocketSync: ObservableObject {
             return result
         }
         return [item] + items
+    }
+
+    fileprivate static func visible(_ items: [PocketItem]) -> [PocketItem] {
+        items.filter { $0.deleted != true }
+            .sorted { (date($0.updatedAt) ?? .distantPast) > (date($1.updatedAt) ?? .distantPast) }
     }
 
     private func enqueue(_ item: PocketItem) throws {
@@ -229,8 +388,7 @@ final class PocketSync: ObservableObject {
             return
         }
         var candidate = state
-        if let index = candidate.items.firstIndex(where: { $0.id == item.id }) { candidate.items[index] = item }
-        else { candidate.items.append(item) }
+        candidate.items = Self.merging(candidate.items, item)
         do {
             try save(candidate)
             if notify { try onImportedItem?(item) }
@@ -277,8 +435,21 @@ final class PocketSync: ObservableObject {
                       let sealed = Data(base64Encoded: event.payload), sealed.count <= 16_384 else { throw PocketError.invalidResponse }
                 let clear = try Self.open(sealed, token: token)
                 let envelope = try JSONDecoder().decode(Envelope.self, from: clear)
-                guard envelope.v == 1, envelope.op == "upsert", Self.valid(envelope.item) else { throw PocketError.invalidResponse }
-                try merge(envelope.item, notify: true)
+                guard envelope.v == 1 else { throw PocketError.invalidResponse }
+                switch envelope.op {
+                case "upsert":
+                    guard let item = envelope.item, Self.valid(item) else { throw PocketError.invalidResponse }
+                    try merge(item, notify: true)
+                case "chat":
+                    guard let message = envelope.message, Self.valid(message) else { throw PocketError.invalidResponse }
+                    if message.role == .user { try storePhoneMessage(message) }
+                case "voice":
+                    guard let voice = envelope.voice, Self.valid(voice) else { throw PocketError.invalidResponse }
+                case "briefing":
+                    guard let briefing = envelope.briefing, Self.valid(briefing) else { throw PocketError.invalidResponse }
+                    try storePhoneBriefing(briefing)
+                default: throw PocketError.invalidResponse
+                }
                 var advanced = state
                 advanced.cursor = event.seq
                 try save(advanced)
@@ -287,10 +458,46 @@ final class PocketSync: ObservableObject {
             advanced.cursor = max(advanced.cursor, response.cursor)
             try save(advanced)
             status = "Synced \(state.items.count) items. Last checked just now."
+            dispatchPendingChat()
+            dispatchPendingBriefings()
         } catch {
             guard enabled, self.token == token, generation == self.syncGeneration else { return }
             status = "Sync paused: \(error.localizedDescription). Local changes remain saved."
         }
+    }
+
+    private func storePhoneMessage(_ message: PocketChatMessage) throws {
+        if state.processedChatIDs.contains(message.id) { return }
+        if let old = state.chatMessages.first(where: { $0.id == message.id }) {
+            guard old == message else { throw PocketError.invalidResponse }
+            return
+        }
+        guard state.pendingChatIDs.count < 200 else { throw PocketError.invalidState }
+        var candidate = state
+        while candidate.chatMessages.count >= 400 {
+            guard let removable = candidate.chatMessages.firstIndex(where: { !candidate.pendingChatIDs.contains($0.id) }) else { throw PocketError.invalidState }
+            candidate.chatMessages.remove(at: removable)
+        }
+        candidate.chatMessages.append(message)
+        candidate.pendingChatIDs.append(message.id)
+        try save(candidate)
+    }
+
+    private func storePhoneBriefing(_ request: PocketBriefingRequest) throws {
+        if let old = state.phoneBriefings.first(where: { $0.id == request.id }) {
+            guard old == request else { throw PocketError.invalidResponse }
+            return
+        }
+        if state.processedBriefingIDs.contains(request.id) { return }
+        guard state.pendingBriefingIDs.count < 200 else { throw PocketError.invalidState }
+        var candidate = state
+        while candidate.phoneBriefings.count >= 400 {
+            guard let removable = candidate.phoneBriefings.firstIndex(where: { !candidate.pendingBriefingIDs.contains($0.id) }) else { throw PocketError.invalidState }
+            candidate.phoneBriefings.remove(at: removable)
+        }
+        candidate.phoneBriefings.append(request)
+        candidate.pendingBriefingIDs.append(request.id)
+        try save(candidate)
     }
 
     private func request(path: String, method: String, token: String, body: Data?) async throws -> Data {
@@ -321,12 +528,16 @@ final class PocketSync: ObservableObject {
         guard data.count <= 4_000_000 else { throw PocketError.invalidState }
         let decoded = try JSONDecoder().decode(State.self, from: data)
         guard decoded.cursor >= 0, decoded.items.count <= 20_000, decoded.pending.count <= 20_000,
-              decoded.items.allSatisfy(Self.valid),
+              decoded.chatMessages.count <= 400, decoded.pendingChatIDs.count <= 200, decoded.processedChatIDs.count <= 10_000,
+              decoded.phoneBriefings.count <= 400, decoded.pendingBriefingIDs.count <= 200, decoded.processedBriefingIDs.count <= 10_000,
+              decoded.items.allSatisfy(Self.valid), decoded.chatMessages.allSatisfy(Self.valid), decoded.phoneBriefings.allSatisfy(Self.valid),
+              decoded.pendingChatIDs.allSatisfy({ UUID(uuidString: $0) != nil }), decoded.processedChatIDs.allSatisfy({ UUID(uuidString: $0) != nil }),
+              decoded.pendingBriefingIDs.allSatisfy({ UUID(uuidString: $0) != nil }), decoded.processedBriefingIDs.allSatisfy({ UUID(uuidString: $0) != nil }),
               decoded.pending.allSatisfy({ UUID(uuidString: $0.id) != nil && UUID(uuidString: $0.itemID) != nil && (Data(base64Encoded: $0.payload)?.count ?? 0) <= 16_384 }) else {
             throw PocketError.invalidState
         }
         state = decoded
-        items = decoded.items.sorted { (Self.date($0.updatedAt) ?? .distantPast) > (Self.date($1.updatedAt) ?? .distantPast) }
+        items = Self.visible(decoded.items)
     }
 
     private func save(_ candidate: State) throws {
@@ -335,10 +546,16 @@ final class PocketSync: ObservableObject {
         guard data.count <= 4_000_000 else { throw PocketError.invalidState }
         try data.write(to: stateURL, options: .atomic)
         state = candidate
-        items = candidate.items.sorted { (Self.date($0.updatedAt) ?? .distantPast) > (Self.date($1.updatedAt) ?? .distantPast) }
+        items = Self.visible(candidate.items)
     }
 
     private func persist() throws { try save(state) }
+
+    fileprivate static func legacyStateHasEmptyChat(_ data: Data) -> Bool {
+        guard let legacy = try? JSONDecoder().decode(State.self, from: data) else { return false }
+        return legacy.chatMessages.isEmpty && legacy.pendingChatIDs.isEmpty && legacy.processedChatIDs.isEmpty &&
+            legacy.phoneBriefings.isEmpty && legacy.pendingBriefingIDs.isEmpty && legacy.processedBriefingIDs.isEmpty
+    }
 
     private static func prepareRoot(_ root: URL) throws {
         let fm = FileManager.default
@@ -379,16 +596,42 @@ final class PocketSync: ObservableObject {
               let c = date(item.createdAt),
               let u = date(item.updatedAt), u >= c else { return false }
         switch item.kind {
-        case .todo, .thought:
+        case .todo:
             return item.calendarRequest == nil
+        case .thought:
+            return item.calendarRequest == nil && item.deleted != true
         case .calendar:
-            guard let request = item.calendarRequest,
+            guard item.deleted != true, let request = item.calendarRequest,
                   request.startAt.count <= 40, request.endAt.count <= 40,
                   let start = date(request.startAt), let end = date(request.endAt),
                   end > start, end.timeIntervalSince(start) <= 366 * 24 * 60 * 60,
                   TimeZone(identifier: request.timeZone) != nil else { return false }
             return true
         }
+    }
+
+    fileprivate static func valid(_ message: PocketChatMessage) -> Bool {
+        guard UUID(uuidString: message.id) != nil, UUID(uuidString: message.conversationID) != nil,
+              message.createdAt.count <= 40, date(message.createdAt) != nil,
+              !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        switch message.role {
+        case .user: return message.text.count <= 2000 && message.replyToID == nil
+        case .chef: return message.text.count <= 400 && message.replyToID.flatMap(UUID.init(uuidString:)) != nil
+        }
+    }
+
+    fileprivate static func valid(_ chunk: PocketVoiceChunk) -> Bool {
+        guard UUID(uuidString: chunk.id) != nil, UUID(uuidString: chunk.messageID) != nil,
+              (1...32).contains(chunk.count), (0..<chunk.count).contains(chunk.index),
+              chunk.data.utf8.count <= 8000, let data = Data(base64Encoded: chunk.data),
+              data.count <= 6000 else { return false }
+        return true
+    }
+
+    fileprivate static func valid(_ request: PocketBriefingRequest) -> Bool {
+        UUID(uuidString: request.id) != nil && UUID(uuidString: request.conversationID) != nil &&
+            (1...1200).contains(request.request.count) && date(request.createdAt) != nil && request.createdAt.count <= 40 &&
+            !PersonalWorkspace.hasCredential(request.request) && !Safety.blocked(request.request)
     }
 
     private static func date(_ text: String) -> Date? {
@@ -651,6 +894,48 @@ enum PocketSyncTests {
         completedCalendarItem.updatedAt = "2026-01-01T00:00:01.000Z"
         let updatedMerge = PocketSync.merging([calendarItem], completedCalendarItem)
         guard updatedMerge.count == 1, updatedMerge[0].done else { throw PocketSync.PocketError.invalidItem }
+        var deletedTodo = item
+        deletedTodo.deleted = true
+        deletedTodo.updatedAt = "2026-01-01T00:00:02.000Z"
+        var newerTodo = item
+        newerTodo.updatedAt = "2026-01-01T00:00:03.000Z"
+        let staleDeleteMerge = PocketSync.merging([newerTodo], deletedTodo)
+        guard PocketSync.valid(deletedTodo), staleDeleteMerge.count == 1,
+              staleDeleteMerge[0].deleted != true,
+              PocketSync.merging([deletedTodo], deletedTodo) == [deletedTodo],
+              PocketSync.visible([item, deletedTodo]) == [item] else { throw PocketSync.PocketError.invalidItem }
+        let deletedJSON = try JSONEncoder().encode(deletedTodo)
+        let restoredDeleted = try JSONDecoder().decode(PocketItem.self, from: deletedJSON)
+        guard restoredDeleted.deleted == true else { throw PocketSync.PocketError.invalidItem }
+        let legacyJSONWithNoDeletion = try JSONEncoder().encode(legacyItem)
+        let restoredLegacy = try JSONDecoder().decode(PocketItem.self, from: legacyJSONWithNoDeletion)
+        guard restoredLegacy.deleted == nil else { throw PocketSync.PocketError.invalidItem }
+        let phoneUser = PocketChatMessage(id: UUID().uuidString.lowercased(), conversationID: UUID().uuidString.lowercased(),
+                                          role: .user, text: "What time is it?", createdAt: item.createdAt)
+        let phoneChef = PocketChatMessage(id: UUID().uuidString.lowercased(), conversationID: phoneUser.conversationID,
+                                          role: .chef, text: "I can help with that.", createdAt: item.updatedAt, replyToID: phoneUser.id)
+        let phoneChunk = PocketVoiceChunk(id: UUID().uuidString.lowercased(), messageID: phoneChef.id, index: 0, count: 1,
+                                          data: Data(repeating: 1, count: 6000).base64EncodedString())
+        guard PocketSync.valid(phoneUser), PocketSync.valid(phoneChef), PocketSync.valid(phoneChunk),
+              !PocketSync.valid(PocketChatMessage(id: "bad", conversationID: phoneUser.conversationID, role: .user, text: "hello", createdAt: item.createdAt)),
+              !PocketSync.valid(PocketChatMessage(id: phoneChef.id, conversationID: phoneUser.conversationID, role: .chef, text: String(repeating: "x", count: 401), createdAt: item.updatedAt, replyToID: phoneUser.id)),
+              !PocketSync.valid(PocketVoiceChunk(id: phoneChunk.id, messageID: phoneChef.id, index: 1, count: 1, data: phoneChunk.data)),
+              !PocketSync.valid(PocketVoiceChunk(id: phoneChunk.id, messageID: phoneChef.id, index: 0, count: 1, data: String(repeating: "A", count: 8001))) else {
+            throw PocketSync.PocketError.invalidResponse
+        }
+        let briefing = PocketBriefingRequest(id: UUID().uuidString.lowercased(), conversationID: phoneUser.conversationID,
+                                             requestType: .now, request: "Give me a briefing", createdAt: item.createdAt)
+        guard PocketSync.valid(briefing),
+              !PocketSync.valid(PocketBriefingRequest(id: "bad", conversationID: briefing.conversationID, requestType: .now,
+                                                       request: briefing.request, createdAt: briefing.createdAt)),
+              !PocketSync.valid(PocketBriefingRequest(id: briefing.id, conversationID: briefing.conversationID, requestType: .schedule,
+                                                       request: "Buy shares", createdAt: briefing.createdAt)) else { throw PocketSync.PocketError.invalidResponse }
+        let legacyState = Data(#"{"cursor":0,"items":[],"pending":[],"resumeEnabled":false}"#.utf8)
+        guard PocketSync.legacyStateHasEmptyChat(legacyState) else { throw PocketSync.PocketError.invalidState }
+        guard !PocketSync.valid(PocketItem(id: UUID().uuidString.lowercased(), kind: .thought, text: "note", done: false,
+                                           createdAt: item.createdAt, updatedAt: item.updatedAt, deleted: true)) else {
+            throw PocketSync.PocketError.invalidItem
+        }
         // Produced by WebCrypto AES-GCM with IV 000102030405060708090a0b, the key
         // derived from this fixture token, and the cleartext below. Combined form is IV || ciphertext || tag.
         let webCryptoCombined = Data(base64Encoded: "AAECAwQFBgcICQoLWkSf/dtOBGJ29NoZsT7Jk8dXnxls/d1czgw8fYhX3VFbHr/yNBFk4g==")!

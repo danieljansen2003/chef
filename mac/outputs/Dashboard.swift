@@ -507,7 +507,9 @@ struct ChefView: View {
                     TextField("Fish voice model ID · 32-character ID from its voice URL", text: $model.fishVoiceID).textFieldStyle(.roundedBorder)
                     Toggle("Allow conversation reply text to be sent to Fish Audio", isOn: Binding(get: { model.fishConsent }, set: { model.setFishConsent($0) }))
                     Toggle("Allow calendar and to-do reply text to be spoken by Fish", isOn: Binding(get: { model.fishPlanningConsent }, set: { model.setFishPlanningConsent($0) }))
-                    Text("Only calendar and to-do reply text is shared. Fish may retain it for model improvement. Desktop screens, credentials and account details stay local.").font(.caption)
+                    Toggle("Allow phone-chat reply text to be sent to Fish Audio for speech", isOn: Binding(get: { model.fishPhoneReplyConsent }, set: { model.setFishPhoneReplyConsent($0) }))
+                    Toggle("Allow requested phone briefing text, including saved to-dos, to be sent to Fish Audio", isOn: Binding(get: { model.fishPhoneBriefingConsent }, set: { model.setFishPhoneBriefingConsent($0) }))
+                    Text("Only reply text you explicitly allow is shared; Fish may retain it for model improvement. Requested phone briefings can include saved to-dos. Desktop screens, credentials, and personal profile/history stay local. Separate toggles control phone chat and briefing text.").font(.caption)
                     HStack {
                         Button("Open free key setup") { model.openFishSetup() }
                         Button("Save & enable free voice") { model.saveFishVoice() }

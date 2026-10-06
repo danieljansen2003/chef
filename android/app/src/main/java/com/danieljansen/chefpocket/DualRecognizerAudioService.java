@@ -23,6 +23,7 @@ final class DualRecognizerAudioService {
     private final Model model;
     private final Handler main=new Handler(Looper.getMainLooper());
     private volatile boolean active;
+    private volatile boolean suppressPlayback;
     private Thread thread;
     private RecognitionListener listener;
     private WakeListener wakeListener;
@@ -56,6 +57,7 @@ final class DualRecognizerAudioService {
             if(!active)break;
             if(count<0)throw new IOException("Android microphone read failed ("+count+").");
             if(count==0)continue;
+            if(suppressPlayback){wakeRecognizer.reset();commandRecognizer.reset();java.util.Arrays.fill(samples,0,count,(short)0);continue;}
             feedWake(samples,count);
             boolean endpoint=commandRecognizer.acceptWaveForm(samples,count);
             if(endpoint){String result=commandRecognizer.getResult();postResult(result);}else{String partial=commandRecognizer.getPartialResult();postPartial(partial);}
@@ -78,6 +80,8 @@ final class DualRecognizerAudioService {
             catch(Exception ignored){}
         }
     }
+
+    void suppressPlayback(boolean suppress){suppressPlayback=suppress;}
     private void reportWake(){WakeListener callback=wakeListener;if(callback!=null)main.post(callback::onWakePhrase);}
     private void postResult(String json){RecognitionListener callback=listener;if(callback!=null)main.post(()->callback.onResult(json));}
     private void postPartial(String json){RecognitionListener callback=listener;if(callback!=null)main.post(()->callback.onPartialResult(json));}

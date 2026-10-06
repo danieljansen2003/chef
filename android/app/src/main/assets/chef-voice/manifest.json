@@ -16,6 +16,9 @@
     "I didn't hear a capture. Say hey chef again.": "no_capture",
     "Chef Pocket voice capture stopped.": "stopped",
     "Chef Pocket voice capture timed out.": "timed_out",
-    "Hello. I'm Chef. My voice is ready.": "speaker_test"
+    "Hello. I'm Chef. My voice is ready.": "speaker_test",
+    "To-do removed.": "todo_removed",
+    "I found more than one matching to-do. Please be more specific.": "todo_ambiguous",
+    "I couldn't find that to-do.": "todo_not_found"
   }
 }

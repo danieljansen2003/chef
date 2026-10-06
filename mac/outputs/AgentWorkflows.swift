@@ -166,6 +166,8 @@ struct AgentWorkflow: Codable, Identifiable, Equatable {
     /// decode with nil and retain their existing recurrence behavior.
     var oneShotAt: Date? = nil
     var requestSummary: String? = nil
+    var phoneConversationID: String? = nil
+    var phoneRequestID: String? = nil
     var deliveryPending: Bool? = nil
     var deliveredAt: Date? = nil
 }
@@ -234,9 +236,10 @@ final class AgentWorkflowStore {
         guard let book = try read().playbooks.first(where: { $0.group == group }) else { return "" }
         return book.lessons.suffix(8).map { "- " + $0 }.joined(separator: "\n")
     }
-    @discardableResult func scheduleBriefing(hour: Int, minute: Int, location: String = "", at now: Date = Date()) throws -> AgentWorkflow {
+    @discardableResult func scheduleBriefing(hour: Int, minute: Int, location: String = "", phoneConversationID: String? = nil, phoneRequestID: String? = nil, at now: Date = Date()) throws -> AgentWorkflow {
         guard (0...23).contains(hour), (0..<60).contains(minute), location.count <= 100,
-              !PersonalWorkspace.hasCredential(location), !Safety.blocked(location) else { throw StoreError.invalid }
+              !PersonalWorkspace.hasCredential(location), !Safety.blocked(location),
+              (phoneConversationID == nil && phoneRequestID == nil) || (phoneConversationID.flatMap(UUID.init(uuidString:)) != nil && phoneRequestID.flatMap(UUID.init(uuidString:)) != nil) else { throw StoreError.invalid }
         lock.lock(); defer { lock.unlock() }
         var doc = try read()
         guard doc.workflows.count < maxWorkflows else { throw StoreError.full }
@@ -254,22 +257,24 @@ final class AgentWorkflowStore {
             let newKey = Self.occurrenceKey(day: today, hour: hour, minute: minute)
             let alreadyHandled = (item.handledOccurrenceKeys ?? []).contains(newKey)
             item.hour = hour; item.minute = minute; item.location = location; item.timezone = calendar.timeZone.identifier
+            if let phoneConversationID, let phoneRequestID { item.phoneConversationID = phoneConversationID; item.phoneRequestID = phoneRequestID }
             item.state = alreadyHandled ? item.state : .scheduled
             item.nextRun = next; doc.workflows[index] = item
             try write(doc); return item
         }
-        let item = AgentWorkflow(id: "daily-briefing", title: "Daily Briefing", group: "Briefing", workerIDs: AgentWorkflowIdentity.briefingWorkers.map(\.id), hour: hour, minute: minute, timezone: calendar.timeZone.identifier, location: location, state: .scheduled, createdAt: now, lastRunDay: nil, lastRunOccurrenceKey: nil, handledOccurrenceKeys: nil, lastStartedAt: nil, lastFinishedAt: nil, lastOutcome: nil, nextRun: next)
+        let item = AgentWorkflow(id: "daily-briefing", title: "Daily Briefing", group: "Briefing", workerIDs: AgentWorkflowIdentity.briefingWorkers.map(\.id), hour: hour, minute: minute, timezone: calendar.timeZone.identifier, location: location, state: .scheduled, createdAt: now, lastRunDay: nil, lastRunOccurrenceKey: nil, handledOccurrenceKeys: nil, lastStartedAt: nil, lastFinishedAt: nil, lastOutcome: nil, nextRun: next, phoneConversationID: phoneConversationID, phoneRequestID: phoneRequestID)
         doc.workflows.append(item); try write(doc); return item
     }
     /// Adds a bounded one-time briefing to the same durable claim queue used by
     /// daily briefings. The app must be running and awake when it becomes due.
-    @discardableResult func scheduleOneShotBriefing(at date: Date, location: String = "", request: String = "", now: Date = Date()) throws -> AgentWorkflow {
+    @discardableResult func scheduleOneShotBriefing(at date: Date, location: String = "", request: String = "", phoneConversationID: String? = nil, phoneRequestID: String? = nil, now: Date = Date()) throws -> AgentWorkflow {
         let city = location.trimmingCharacters(in: .whitespacesAndNewlines)
         let objective = request.trimmingCharacters(in: .whitespacesAndNewlines)
         guard date > now, date.timeIntervalSince(now) <= 30 * 24 * 60 * 60,
               city.count <= 100, objective.count <= 500,
               !PersonalWorkspace.hasCredential(city), !Safety.blocked(city),
-              !PersonalWorkspace.hasCredential(objective), !Safety.blocked(objective) else { throw StoreError.invalid }
+              !PersonalWorkspace.hasCredential(objective), !Safety.blocked(objective),
+              (phoneConversationID == nil && phoneRequestID == nil) || (phoneConversationID.flatMap(UUID.init(uuidString:)) != nil && phoneRequestID.flatMap(UUID.init(uuidString:)) != nil) else { throw StoreError.invalid }
         lock.lock(); defer { lock.unlock() }
         var doc = try read()
         // Keep active jobs and the daily workflow. Completed one-shot history
@@ -286,7 +291,7 @@ final class AgentWorkflowStore {
         let parts = dateCalendar.dateComponents([.hour, .minute], from: date)
         let scope = AgentBriefingScope(request: objective.isEmpty ? nil : objective, oneShot: true)
         let requestedWorkers = zip(AgentWorkflowIdentity.briefingWorkers, [scope.weather, scope.news, scope.tasks]).filter { $0.1 }.map { $0.0.id }
-        let item = AgentWorkflow(id: "briefing-once-" + UUID().uuidString.lowercased(), title: objective.isEmpty ? "One-time Briefing" : String(objective.prefix(80)), group: "Briefing", workerIDs: requestedWorkers, hour: parts.hour ?? 0, minute: parts.minute ?? 0, timezone: "America/Chicago", location: inheritedCity, state: .scheduled, createdAt: now, lastRunDay: nil, lastRunOccurrenceKey: nil, handledOccurrenceKeys: nil, lastStartedAt: nil, lastFinishedAt: nil, lastOutcome: nil, nextRun: date, oneShotAt: date, requestSummary: objective.isEmpty ? nil : objective)
+        let item = AgentWorkflow(id: "briefing-once-" + UUID().uuidString.lowercased(), title: objective.isEmpty ? "One-time Briefing" : String(objective.prefix(80)), group: "Briefing", workerIDs: requestedWorkers, hour: parts.hour ?? 0, minute: parts.minute ?? 0, timezone: "America/Chicago", location: inheritedCity, state: .scheduled, createdAt: now, lastRunDay: nil, lastRunOccurrenceKey: nil, handledOccurrenceKeys: nil, lastStartedAt: nil, lastFinishedAt: nil, lastOutcome: nil, nextRun: date, oneShotAt: date, requestSummary: objective.isEmpty ? nil : objective, phoneConversationID: phoneConversationID, phoneRequestID: phoneRequestID)
         doc.workflows.append(item); try write(doc); return item
     }
     func cancelOneShotBriefing(id: String) throws {
@@ -537,12 +542,15 @@ final class AgentWorkflowStore {
         let onceStore = AgentWorkflowStore(root: onceRoot); try onceStore.prepare()
         let oneShotAt = cDate(year: 2026, month: 10, day: 4, hour: 11, minute: 30, timezone: "America/Chicago")
         let oneShotCreated = fixedNow
-        let oneShot = try onceStore.scheduleOneShotBriefing(at: oneShotAt, location: "Columbia, Illinois", now: oneShotCreated)
+        let phoneConversationID = UUID().uuidString.lowercased(), phoneRequestID = UUID().uuidString.lowercased()
+        let oneShot = try onceStore.scheduleOneShotBriefing(at: oneShotAt, location: "Columbia, Illinois", phoneConversationID: phoneConversationID, phoneRequestID: phoneRequestID, now: oneShotCreated)
         let secondOneShot = try onceStore.scheduleOneShotBriefing(at: oneShotAt, request: "Stocks and to-do list", now: oneShotCreated)
         guard oneShot.workerIDs == AgentWorkflowIdentity.briefingWorkers.map(\.id),
               secondOneShot.workerIDs == ["Iris", "Atlas"] else { throw StoreError.invalid }
         let reopenedOnce = AgentWorkflowStore(root: onceRoot); try reopenedOnce.prepare()
-        guard try reopenedOnce.due(at: oneShotCreated).isEmpty else { throw StoreError.invalid }
+        guard try reopenedOnce.workflows().first(where: { $0.id == oneShot.id })?.phoneConversationID == phoneConversationID,
+              try reopenedOnce.workflows().first(where: { $0.id == oneShot.id })?.phoneRequestID == phoneRequestID,
+              try reopenedOnce.due(at: oneShotCreated).isEmpty else { throw StoreError.invalid }
         let preparationAt = oneShotAt.addingTimeInterval(-45)
         let claimedOnce = try reopenedOnce.due(at: preparationAt)
         guard claimedOnce.map(\.id) == [oneShot.id] else { throw StoreError.invalid }

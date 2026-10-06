@@ -228,7 +228,7 @@ final class PersonalWorkspace {
         fractionalISO.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let created = fractionalISO.date(from: item.createdAt) ?? ISO8601DateFormatter().date(from: item.createdAt)
         let updated = fractionalISO.date(from: item.updatedAt) ?? ISO8601DateFormatter().date(from: item.updatedAt)
-        guard item.kind == .todo, let id = item.uuid, item.text.count <= 500,
+        guard item.kind == .todo, item.deleted != true, let id = item.uuid, item.text.count <= 500,
               !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let created, let updated, updated >= created else { throw StoreError.invalid }
         let savedJobs = try jobs()
@@ -239,6 +239,20 @@ final class PersonalWorkspace {
         job.message = "Synced from Pocket. This saved text does not start an action."
         try write(JSONEncoder().encode(job), to: "jobs/" + id.uuidString + ".json")
         return job
+    }
+    @discardableResult
+    func deletePocketTodo(_ item: PocketItem) throws -> Bool {
+        let fractionalISO = ISO8601DateFormatter()
+        fractionalISO.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let created = fractionalISO.date(from: item.createdAt) ?? ISO8601DateFormatter().date(from: item.createdAt)
+        let updated = fractionalISO.date(from: item.updatedAt) ?? ISO8601DateFormatter().date(from: item.updatedAt)
+        guard item.kind == .todo, item.deleted == true, let id = item.uuid,
+              !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              item.text.count <= 500, let created, let updated, updated >= created else { throw StoreError.invalid }
+        guard let job = try jobs().first(where: { $0.id == id }) else { return false }
+        guard job.skill == .todo else { throw StoreError.invalid }
+        try manager.removeItem(at: checked("jobs/" + id.uuidString + ".json"))
+        return true
     }
     func prompt(for job: PersonalJob, context: PersonalContext, handoff: Bool = false) -> String {
         let data = String(data: (try? JSONSerialization.data(withJSONObject: ["title": job.title, "details": handoff ? job.details : String(job.details.prefix(3500))], options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? "{}"
@@ -314,6 +328,16 @@ final class PersonalWorkspace {
             precondition(completedPocketJob.status == "Completed")
             let jobsAfterPocketCompletion = try store.jobs()
             precondition(!PersonalRouting.todoTitles(in: jobsAfterPocketCompletion).contains("Pick up the parcel"))
+            var deletedPocketItem = completedPocketItem
+            deletedPocketItem.deleted = true
+            deletedPocketItem.updatedAt = "2026-01-01T00:00:02.789Z"
+            let removedPocketTodo = try store.deletePocketTodo(deletedPocketItem)
+            precondition(removedPocketTodo)
+            let jobsAfterPocketDelete = try store.jobs()
+            precondition(!jobsAfterPocketDelete.contains(where: { $0.id == pocketID }))
+            let replayedPocketDelete = try store.deletePocketTodo(deletedPocketItem)
+            precondition(!replayedPocketDelete) // Replaying a tombstone is idempotent.
+            do { _ = try store.importPocketTodo(deletedPocketItem); preconditionFailure("A deletion tombstone was imported as a completed task") } catch {}
             let todoJob = try store.createJob(title: todoTitle, details: todoTitle, skill: .todo)
             precondition(PersonalRouting.todoTitles(in: [todoJob]).contains(todoTitle))
             _ = try store.updateStatus(todoJob, status: "Needs Reminders", message: "Saved locally")

@@ -13,7 +13,7 @@ export async function GET(request:Request,{params}:{params:Promise<{channel:stri
  try {
  if(!await authorize(request,channel)) return json({error:"Not paired"},401);
  const after=Number(new URL(request.url).searchParams.get("after")||0);if(!Number.isSafeInteger(after)||after<0) return json({error:"Invalid cursor"},400);
- const result=await database().prepare("SELECT seq, id, payload FROM events WHERE channel = ? AND seq > ? ORDER BY seq LIMIT 200").bind(channel,after).all();
+ const result=await database().prepare("SELECT seq, id, payload FROM events WHERE channel = ? AND seq > ? ORDER BY seq LIMIT 50").bind(channel,after).all();
  const rows=result.results as {seq:number,id:string,payload:string}[];
  return json({events:rows,cursor:rows.at(-1)?.seq??after});
  }catch{return json({error:"Sync is unavailable. Your capture is kept on this device."},503);}

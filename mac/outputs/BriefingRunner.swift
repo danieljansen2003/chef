@@ -80,9 +80,35 @@ extension ChefModel {
             let requestedResults = zip([wantsWeather, wantsNews, wantsTasks], parts).filter { $0.0 }.map { $0.1 }
             do { try self.workflowStore.complete(id: job.id, success: requestedResults.allSatisfy { $0.1 }, evidence: AISecrets.redact(String(text.prefix(500))), report: text, workers: self.workflowWorkerStatus) }
             catch { self.workspaceStatus = "Briefing ran but its outcome could not be saved: " + error.localizedDescription }
+            if let conversationID = job.phoneConversationID, let requestID = job.phoneRequestID {
+                let requestedFlags = [wantsWeather, wantsNews, wantsTasks]
+                let phoneParts = zip(requestedFlags, parts).enumerated().compactMap { entry in
+                    let (index, pair) = entry
+                    return pair.0 ? String(pair.1.0.prefix([135, 135, 90][index])) : nil
+                }
+                let phoneText = String(("Briefing: " + phoneParts.joined(separator: " · ") +
+                    (scope.stockMarket ? " · Stock quotes unavailable; business headlines only." : "")).prefix(400))
+                let audio = await self.phoneSpeechAudio(text: phoneText, approvedPlanningText: true)
+                try? self.pocketSync?.enqueuePhoneReply(conversationID: conversationID, replyToID: requestID, text: phoneText, audio: audio)
+            }
             self.reloadWorkflows()
             self.deliverPendingBriefingIfReady()
         }
+    }
+    func runPhoneBriefingNow(_ request: String) async -> (text: String, includesPrivateData: Bool) {
+        let scope = AgentBriefingScope(request: request, oneShot: true)
+        async let weather = Self.optionalPublicBriefingPart(scope.weather, query: LiveQuery(kind: .weather, query: workflows.first?.location ?? "Columbia, Illinois"))
+        async let news = Self.optionalPublicBriefingPart(scope.news, query: LiveQuery(kind: .news, query: "business"))
+        async let tasks = optionalBriefingTasks(scope.tasks)
+        var parts = await [weather, news, tasks]
+        if scope.stockMarket { parts[1].0 += " Stock quotes are unavailable; these are business headlines only." }
+        var pieces: [String] = []
+        let limits = [145, 145, 95]
+        for index in 0..<3 where [scope.weather, scope.news, scope.tasks][index] {
+            pieces.append(String(parts[index].0.prefix(limits[index])))
+        }
+        let joined = "Briefing: " + pieces.joined(separator: " · ")
+        return (String(joined.prefix(400)), scope.includesPrivateData)
     }
     private static func publicBriefingPart(_ query: LiveQuery) async -> (String, Bool) {
         if query.kind == .weather && query.query.isEmpty { return ("Weather needs a city. Say ‘set briefing location to Columbia, Illinois’.", false) }
