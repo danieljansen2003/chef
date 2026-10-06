@@ -52,25 +52,42 @@ public class CaptureLogicTest {
         assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("save this thought",20+WakePhraseMachine.COMMAND_WINDOW_MS).kind);
         assertEquals(0,machine.deadline());
     }
-    @Test public void wakeRecognitionHandlesSmallTranscriptionVariantsOnlyAtPhraseBoundary(){
+    @Test public void constrainedWakeGrammarRequiresExactPhraseAndUnknownRejects(){
+        assertTrue(WakePhraseMachine.isWakeGrammarText("hey chef"));
+        assertTrue(WakePhraseMachine.isWakeGrammarText("Hey Chef."));
+        assertTrue(WakePhraseMachine.isWakeGrammarText("hey chef [unk]"));
+        assertTrue(WakePhraseMachine.isWakeGrammarText("hey chef [unk] [unk]"));
+        assertFalse(WakePhraseMachine.isWakeGrammarText("hey jeff"));
+        assertFalse(WakePhraseMachine.isWakeGrammarText("a shaft"));
+        assertFalse(WakePhraseMachine.isWakeGrammarText("[unk] hey chef"));
+        assertFalse(WakePhraseMachine.isWakeGrammarText("[unk]"));
+        assertFalse(WakePhraseMachine.isWakeGrammarText("hey chef groceries"));
+        assertFalse(WakePhraseMachine.isWakeGrammarText("hey chefboyardee"));
+    }
+    @Test public void wakeRecognitionRequiresValidatedWindowAndExplicitActionBoundary(){
         WakePhraseMachine machine=new WakePhraseMachine();
-        assertTrue(machine.observePartialWake("hey, Jeff",200));
-        long deadline=machine.deadline();assertTrue(machine.observePartialWake("hey chef add",201));assertEquals(deadline,machine.deadline());
-        assertEquals(WakePhraseMachine.ResultKind.LISTENING,machine.accept("hey Jeff",201).kind);
-        assertEquals(WakePhraseMachine.ResultKind.CAPTURE,machine.accept("hey check, add milk to my to-do list",202).kind);
-        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("hey chefboyardee",203).kind);
-        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("a chef walked into the room",204).kind);
+        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("a shaft add milk to my to-do list",200).kind);
+        machine.observeValidatedWake(200);
+        WakePhraseMachine.Result command=machine.accept("a shaft add milk to my to-do list",201);
+        assertEquals(WakePhraseMachine.ResultKind.CAPTURE,command.kind);assertEquals("add milk to my to-do list",command.text);
+        machine.observeValidatedWake(202);
+        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("don't add milk to my to-do list",203).kind);
+        machine.reset();machine.observeValidatedWake(204);
+        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("the cat a shaft add milk",205).kind);
+        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("a shaft random conversation",206).kind);
     }
     @Test public void partialWakeFollowedByFinalFullCommandCapturesAndWakeOnlyStaysListening(){
         WakePhraseMachine machine=new WakePhraseMachine();
-        assertTrue(machine.observePartialWake("hey chef add",100));
-        WakePhraseMachine.Result command=machine.accept("hey chef add groceries to my to-do list",101);
+        machine.observeValidatedWake(100);
+        WakePhraseMachine.Result command=machine.accept("a shaft add groceries to my to-do list",101);
         assertEquals(WakePhraseMachine.ResultKind.CAPTURE,command.kind);
         assertEquals("add groceries to my to-do list",command.text);
-        assertTrue(machine.observePartialWake("hey jeff",200));
-        WakePhraseMachine.Result wakeOnly=machine.accept("hey Jeff",201);
-        assertEquals(WakePhraseMachine.ResultKind.LISTENING,wakeOnly.kind);
-        assertEquals(WakePhraseMachine.Mode.COMMAND,machine.mode());
+        machine.observeValidatedWake(200);
+        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("a shaft maybe add groceries",201).kind);
+        machine.reset();
+        assertTrue(machine.observePartialWake("hey chef",202));
+        WakePhraseMachine.Result wakeOnly=machine.accept("hey chef",203);
+        assertEquals(WakePhraseMachine.ResultKind.LISTENING,wakeOnly.kind);assertEquals(WakePhraseMachine.Mode.COMMAND,machine.mode());
     }
     @Test public void calendarDateBecomesLocalAllDayInterval(){
         CalendarParser.Result result=CalendarParser.parse("hey chef make sure to add dentist tomorrow to my calendar",ZoneId.of("America/Chicago"));

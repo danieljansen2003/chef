@@ -29,6 +29,10 @@ Calendar requests are saved durably and synced as requests. The user may grant C
 
 The relay URL is the existing Chef Pocket service. A successful Android build does not prove that the current Site accepts native app requests, or that a real Android device can reach the user's Mac. The existing Site is published; real-device sync and screen-off recognition still require testing on the user's Android and Mac. No device control or unattended actions are provided.
 
+## Wake repair in 1.2
+
+One AudioRecord microphone stream feeds a dedicated constrained “hey chef” recognizer and a separate unrestricted command recognizer. The wake decoder includes an unknown-speech path to reject other speech. A valid wake event opens a bounded command window; command captures remain explicitly gated. The phone stays offline for recognition and keeps the same bundled Fish Chef confirmations. Real S25 Ultra/Android16 testing is still required.
+
 ## Voice repair in 1.1
 
 Wake recognition now examines partial hypotheses as well as finalized speech and accepts a bounded set of common on-device transcription variants. “Talk now” explicitly captures the next sentence. Only an active wake window or that button can save a spoken capture. Generic diagnostic status distinguishes recognized speech from a recognized wake without storing ambient transcripts.

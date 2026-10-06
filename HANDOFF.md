@@ -1,3 +1,5 @@
+Android1.2: same microphone stream now feeds a dedicated constrained hey-chef wake decoder plus unrestricted command recognizer; exact validated wake gates commands. Unknown background speech, expired command windows, negations and one-breath name misrecognition have regression coverage. Shared audio resources close only after reader exit. Fish confirmations unchanged. Device wake retest on S25Ultra Android16 pending.
+
 Android 1.1 repair: partial wake recognition, bounded transcription variants, explicit Talk now, and offline Fish Chef voice confirmations. Nine JUnit tests plus assembly/lint and same-key APK signing passed. Human reports Android16/Samsung Galaxy S25 Ultra. Real-device retest pending. Selected Fish voice 14129c3e320149449d6bada6862f7338; fixed public recordings bundled, no API key on phone.
 
 # Current handoff
