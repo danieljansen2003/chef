@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.next/
+.wrangler/
+*.tsbuildinfo
+*.app/
+work/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+.DS_Store

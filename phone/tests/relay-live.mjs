@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {channelFor,authorizationFor,seal,open} from '../lib/pocket.ts';
+const key=crypto.getRandomValues(new Uint8Array(32));const token=Array.from(key,v=>v.toString(16).padStart(2,'0')).join('');
+const channel=await channelFor(token),bearer=await authorizationFor(token);const url='http://127.0.0.1:8787/api/channels/'+channel+'/events';
+const item={id:crypto.randomUUID(),kind:'todo',text:'Disposable encrypted relay fixture',done:false,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};const event={id:crypto.randomUUID(),payload:await seal(token,{v:1,op:'upsert',item})};const headers={Authorization:'Bearer '+bearer,'Content-Type':'application/json'};
+let r=await fetch(url);assert.equal(r.status,401);
+r=await fetch(url,{method:'POST',headers,body:JSON.stringify(event)});assert.equal(r.status,201);
+r=await fetch(url,{method:'POST',headers,body:JSON.stringify(event)});assert.equal(r.status,200);
+r=await fetch(url,{method:'POST',headers,body:JSON.stringify({...event,payload:await seal(token,{v:1,op:'upsert',item:{...item,text:'conflicting fixture'}})})});assert.equal(r.status,409);
+r=await fetch(url+'?after=0',{headers});assert.equal(r.status,200);let data=await r.json();assert.equal(data.events.length,1);assert.equal((await open(token,data.events[0].payload)).item.text,item.text);
+r=await fetch(url+'?after='+data.cursor,{headers});assert.equal((await r.json()).events.length,0);
+r=await fetch(url,{headers:{Authorization:'Bearer '+ 'f'.repeat(64)}});assert.equal(r.status,401);
+r=await fetch(url+'?after=-1',{headers});assert.equal(r.status,400);
+r=await fetch(url,{method:'POST',headers:{...headers,Origin:'https://untrusted.example'},body:JSON.stringify(event)});assert.equal(r.status,403);
+console.log('Local D1 relay: auth, encrypted transfer, idempotent retry, conflict, cursor, wrong-key access and origin checks passed');

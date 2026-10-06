@@ -1,0 +1,22 @@
+{
+  "buildVersion": "81",
+  "checkedAt": "2026-10-06T05:49:40.092415+00:00",
+  "checks": [
+    "Native Swift compilation, both self-test suites, staged and installed signature verification passed",
+    "Agent board saved status mappings including Pocket todos",
+    "WebCrypto to CryptoKit combined AES-GCM interoperability fixture",
+    "Pocket pending event ID/ciphertext persistence and local todo summary fixtures",
+    "Phone TypeScript check and production build passed",
+    "Local D1 relay authentication, encrypted transfer, retry deduplication, conflict rejection, incremental cursor, wrong-key access and origin checks passed"
+  ],
+  "liveChecks": [
+    "Build80 Office, real task board and Phone off-by-default panel inspected in native UI"
+  ],
+  "limitations": [
+    "Build81 adds labelsHidden layout correction; its live restart pending update readiness",
+    "Android physical microphone and Android installation not tested",
+    "Cloud publication blocked by tool approval policy; no verified public sync URL or live Mac-phone pairing",
+    "Phone uses keyboard dictation, with no background wake-word or phone control",
+    "Mac task processing needs Chef running and Mac awake"
+  ]
+}
