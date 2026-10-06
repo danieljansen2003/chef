@@ -27,7 +27,7 @@ final class WakePhraseMachine {
         boolean wake=lower.startsWith("hey chef")&&(lower.length()==8||Character.isWhitespace(lower.charAt(8))||",!?".indexOf(lower.charAt(8))>=0);
         if (wake) {
             String tail = clean.substring(8).replaceFirst("^[,!?\\s]+", "").trim();
-            if (tail.isEmpty()) { mode = Mode.COMMAND; conversationActive=false; deadline = now + COMMAND_WINDOW_MS; return new Result(ResultKind.LISTENING, ""); }
+            if (tail.isEmpty()) { mode = Mode.COMMAND; conversationActive=true; deadline = now + COMMAND_WINDOW_MS; return new Result(ResultKind.LISTENING, ""); }
             if(BriefingParser.requestType(tail)!=null){mode=Mode.COMMAND;conversationActive=true;deadline=now+FOLLOWUP_WINDOW_MS;return new Result(ResultKind.CHAT,tail);}
             if(COMMAND.matcher(tail).matches()){mode=Mode.COMMAND;conversationActive=true;deadline=now+FOLLOWUP_WINDOW_MS;return new Result(ResultKind.CAPTURE,tail);}
             mode=Mode.COMMAND;conversationActive=true;deadline=now+FOLLOWUP_WINDOW_MS;return new Result(ResultKind.CHAT,tail);
@@ -45,7 +45,7 @@ final class WakePhraseMachine {
     }
     void continueConversation(long now){mode=Mode.COMMAND;conversationActive=true;deadline=now+FOLLOWUP_WINDOW_MS;}
     /** Called only when the constrained wake recognizer confirms its exact grammar phrase. */
-    void observeValidatedWake(long now){if(mode!=Mode.COMMAND||now>=deadline){mode=Mode.COMMAND;conversationActive=false;deadline=now+COMMAND_WINDOW_MS;}}
+    void observeValidatedWake(long now){if(mode!=Mode.COMMAND||now>=deadline){mode=Mode.COMMAND;conversationActive=true;deadline=now+COMMAND_WINDOW_MS;}}
     /** Partial recognition may arm the command window, but is never captured. */
     boolean observePartialWake(String partial, long now) {
         String normalized=partial==null?"":partial.trim();

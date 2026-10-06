@@ -61,10 +61,10 @@ public class CaptureLogicTest {
         WakePhraseMachine machine=new WakePhraseMachine();
         assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("add milk to my to-do list",99).kind);
         assertEquals(WakePhraseMachine.ResultKind.LISTENING,machine.accept("hey chef",100).kind);
-        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("background conversation",101).kind);
-        assertEquals(WakePhraseMachine.ResultKind.TIMEOUT,machine.expire(100+WakePhraseMachine.COMMAND_WINDOW_MS).kind);
+        assertEquals(WakePhraseMachine.ResultKind.CHAT,machine.accept("how are you?",101).kind);
+        assertEquals(WakePhraseMachine.ResultKind.TIMEOUT,machine.expire(101+WakePhraseMachine.FOLLOWUP_WINDOW_MS).kind);
         assertEquals(0,machine.deadline());
-        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("add milk to my to-do list",100+WakePhraseMachine.COMMAND_WINDOW_MS+1).kind);
+        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("background conversation",102+WakePhraseMachine.FOLLOWUP_WINDOW_MS).kind);
         machine.reset();
         assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("hey chefboyardee",102).kind);
         assertEquals(WakePhraseMachine.ResultKind.LISTENING,machine.accept("hey chef",102).kind);
@@ -109,8 +109,8 @@ public class CaptureLogicTest {
         machine.observeValidatedWake(202);
         assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("don't add milk to my to-do list",203).kind);
         machine.reset();machine.observeValidatedWake(204);
-        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("the cat a shaft add milk",205).kind);
-        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("a shaft random conversation",206).kind);
+        assertEquals(WakePhraseMachine.ResultKind.CHAT,machine.accept("the cat a shaft add milk",205).kind);
+        assertEquals(WakePhraseMachine.ResultKind.CHAT,machine.accept("a shaft random conversation",206).kind);
     }
     @Test public void partialWakeFollowedByFinalFullCommandCapturesAndWakeOnlyStaysListening(){
         WakePhraseMachine machine=new WakePhraseMachine();
@@ -126,6 +126,12 @@ public class CaptureLogicTest {
         assertEquals(WakePhraseMachine.ResultKind.LISTENING,wakeOnly.kind);assertEquals(WakePhraseMachine.Mode.COMMAND,machine.mode());
     }
     @Test public void followupConversationAcceptsChatRefreshesTimeoutAndEndsExplicitly(){
+        WakePhraseMachine standalone=new WakePhraseMachine();
+        assertEquals(WakePhraseMachine.ResultKind.LISTENING,standalone.accept("hey chef",50).kind);
+        assertEquals(WakePhraseMachine.ResultKind.CHAT,standalone.accept("how are you?",51).kind);
+        assertEquals(WakePhraseMachine.Mode.COMMAND,standalone.mode());
+        assertEquals(WakePhraseMachine.ResultKind.IGNORE,standalone.accept("background conversation",52+WakePhraseMachine.FOLLOWUP_WINDOW_MS).kind);
+
         WakePhraseMachine machine=new WakePhraseMachine();
         assertEquals(WakePhraseMachine.ResultKind.CAPTURE,machine.accept("hey chef add milk to my to-do list",100).kind);
         assertEquals(WakePhraseMachine.ResultKind.CHAT,machine.accept("what should I cook with it?",101).kind);
@@ -133,7 +139,7 @@ public class CaptureLogicTest {
         assertEquals(WakePhraseMachine.ResultKind.END,machine.accept("goodbye chef",102).kind);
         assertEquals(WakePhraseMachine.Mode.WAKE,machine.mode());
         assertEquals(WakePhraseMachine.ResultKind.LISTENING,machine.accept("hey chef",200).kind);
-        assertEquals(WakePhraseMachine.ResultKind.IGNORE,machine.accept("background conversation",201).kind);
+        assertEquals(WakePhraseMachine.ResultKind.CHAT,machine.accept("background conversation",201).kind);
     }
     @Test public void onlyDirectPositiveBriefingPhrasesUseTypedBriefingPath(){
         BriefingParser.Result now=BriefingParser.parse("hey chef give me a briefing");assertNotNull(now);assertEquals("now",now.requestType);
