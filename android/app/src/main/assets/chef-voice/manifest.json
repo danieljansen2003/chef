@@ -1,0 +1,21 @@
+{
+  "voiceId": "14129c3e320149449d6bada6862f7338",
+  "provider": "Fish Audio",
+  "model": "s2.1-pro-free",
+  "phrases": {
+    "I'm listening.": "listening",
+    "Saved to your to-do list.": "todo",
+    "Saved to your thoughts.": "thought",
+    "Calendar event added on this phone.": "calendar_added",
+    "Calendar request saved. Chef Pocket could not add it yet.": "calendar_failed",
+    "Calendar request saved. Choose a calendar in Chef Pocket.": "calendar_choose",
+    "I couldn't save that. Try again in Chef Pocket.": "save_failed",
+    "That capture is too long. Try a shorter one.": "too_long",
+    "Okay, capture canceled.": "canceled",
+    "That voice capture timed out. Say hey chef again.": "capture_timeout",
+    "I didn't hear a capture. Say hey chef again.": "no_capture",
+    "Chef Pocket voice capture stopped.": "stopped",
+    "Chef Pocket voice capture timed out.": "timed_out",
+    "Hello. I'm Chef. My voice is ready.": "speaker_test"
+  }
+}

@@ -1,3 +1,5 @@
+Android 1.1 repair: partial wake recognition, bounded transcription variants, explicit Talk now, and offline Fish Chef voice confirmations. Nine JUnit tests plus assembly/lint and same-key APK signing passed. Human reports Android16/Samsung Galaxy S25 Ultra. Real-device retest pending. Selected Fish voice 14129c3e320149449d6bada6862f7338; fixed public recordings bundled, no API key on phone.
+
 # Current handoff
 
 Native Android Chef Pocket 1.0 is implemented in android/. Six JUnit tests, APK assembly, Android lint, signature verification and native-library 16KB alignment passed on October 6, 2026. The APK includes the offline Vosk model, while source uses scripts/prepare-model.py to fetch the checksum-verified model.

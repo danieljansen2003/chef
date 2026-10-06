@@ -35,4 +35,4 @@ GitHub/Codex Cloud can coordinate source changes. A repository does not grant ac
 
 ## Install on Android
 
-Open https://chef-pocket-daniel.sy-alejandri-0136.chatgpt.site/android.html on the phone, download/install the APK, pair with Mac, choose the Google calendar synced to Mac, and enable Handsfree. Android 8 or later. This is a signed personal test build, not a Play Store release. Six unit tests and build/lint checks pass; real-device microphone and paired-sync proof remains pending.
+Open https://chef-pocket-daniel.sy-alejandri-0136.chatgpt.site/android.html on the phone, download/install the APK, pair with Mac, choose the Google calendar synced to Mac, and enable Handsfree. Android 8 or later. This is a signed personal test build, not a Play Store release. Version1.1 adds Fish Chef spoken confirmations and improved wake recognition. Nine unit tests and build/lint checks pass; real-device microphone and paired-sync proof remains pending.

@@ -13,7 +13,7 @@ python3 scripts/prepare-model.py
 
 The installable debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The official Vosk `vosk-model-small-en-us-0.15` model must be extracted into `app/src/main/assets/model-en-us` before building. It is about 40 MB compressed, designed for mobile, and licensed Apache-2.0. The APK includes the offline model. The model directory is excluded from Git to keep the source checkout small.
 
-For logic checks, run `./gradlew testDebugUnitTest`. No cloud speech recognition or paid API is used.
+For logic checks, run `./gradlew testDebugUnitTest`. Speech recognition stays offline. Fixed public confirmations were generated with the user’s selected Fish Audio Chef voice using the free model and are bundled for offline playback. No Fish credential is shipped to the phone.
 
 ## Voice capture
 
@@ -28,6 +28,12 @@ Calendar requests are saved durably and synced as requests. The user may grant C
 ## Limitations
 
 The relay URL is the existing Chef Pocket service. A successful Android build does not prove that the current Site accepts native app requests, or that a real Android device can reach the user's Mac. The existing Site is published; real-device sync and screen-off recognition still require testing on the user's Android and Mac. No device control or unattended actions are provided.
+
+## Voice repair in 1.1
+
+Wake recognition now examines partial hypotheses as well as finalized speech and accepts a bounded set of common on-device transcription variants. “Talk now” explicitly captures the next sentence. Only an active wake window or that button can save a spoken capture. Generic diagnostic status distinguishes recognized speech from a recognized wake without storing ambient transcripts.
+
+All capture confirmations and the “Test Chef voice” button use bundled Fish recordings for voice ID `14129c3e320149449d6bada6862f7338`. This is spoken capture feedback, not a full phone conversation engine. Playback uses Android Media volume and audio focus; playback failures are displayed rather than silently switching voices. The API key remains in the Mac Keychain. Install 1.1 over 1.0 to preserve pairing and captures; do not uninstall first.
 
 ## Verified build
 
